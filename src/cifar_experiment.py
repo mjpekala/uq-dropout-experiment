@@ -276,7 +276,7 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
             print "[train]: Max number of iterations reached (%d)" % trainInfo.iter
         else:
             print "[train]: Max completed epoch (iter=%d);" % trainInfo.iter
-        print "evaluating validation data..."
+        print "[train]: evaluating validation data..."
 
         Prob = predict(solver.net, Xvalid, batchDim, nSamp=30)
         Mu = np.mean(Prob, axis=2)
