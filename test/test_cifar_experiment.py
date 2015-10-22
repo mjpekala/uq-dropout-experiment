@@ -1,7 +1,6 @@
-"""Unit tests.
+""" Unit tests.
 
-To run (from pwd):
-    PYTHONPATH=../src python test_cifar10_experiment.py
+ Assumes you will be running these from the parent directory.
 """
 
 __author__ = "Mike Pekala"
@@ -18,10 +17,12 @@ import cifar_experiment as ce
 
 
 class TestCifar10Experiment(unittest.TestCase):
-    def test_minibatch_generator(self):
-        fn = os.path.join('..', 'data', 'data_batch_1.bin')
 
-        X, y = ce._read_cifar10_binary(fn)
+    def test_minibatch_generator(self):
+        fn = os.path.join('data', 'data_batch_1.bin')
+
+        with open(fn, 'rb') as f: 
+            X, y = ce._read_cifar10_binary(f)
 
         # Make sure data omission works as expected.
         yAll = np.zeros((10,))
