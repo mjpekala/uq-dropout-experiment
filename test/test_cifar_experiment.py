@@ -22,15 +22,26 @@ class TestCifar10Experiment(unittest.TestCase):
         fn = os.path.join('..', 'data', 'data_batch_1.bin')
 
         X, y = ce._read_cifar10_binary(fn)
+
+        # Make sure data omission works as expected.
         yAll = np.zeros((10,))
-        
-        for X, y, n in ce._minibatch_generator(X, y, nBatch=100, yOmit=[0,]):
-            for label in np.unique(y):
-                yAll[label] += np.sum(y == label)
+        for Xi, yi, n in ce._minibatch_generator(X, y, nBatch=100, yOmit=[0,]):
+            yi = yi[0:n]
+            for label in np.unique(yi):
+                yAll[label] += np.sum(yi == label)
 
         self.assertTrue(yAll[0] == 0)
         for ii in range(1,10):
             self.assertTrue(yAll[ii] > 100)
+
+        # If we omit no data, should hit all the points
+        yAll = np.zeros((10,))
+        for Xi, yi, n in ce._minibatch_generator(X, y, nBatch=100, yOmit=[]):
+            yi = yi[0:n]
+            for label in np.unique(yi):
+                yAll[label] += np.sum(yi == label)
+
+        self.assertTrue(np.sum(yAll) == len(y))
             
             
         
