@@ -150,11 +150,10 @@ def _minibatch_generator(X, y, nBatch, yOmit=[], randomOrder=True):
         
 
 
-def _train_network(XtrainAll, trainAll, Xvalid, yvalid, args):
+def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
     """ Main CNN training loop.
-
-    Creates PyCaffe objects and calls train_one_epoch until done.
     """
+
     #----------------------------------------
     # parse information from the prototxt files
     #----------------------------------------
@@ -168,7 +167,8 @@ def _train_network(XtrainAll, trainAll, Xvalid, yvalid, args):
     batchDim = pycnn.infer_data_dimensions(netFn)
     assert(batchDim[2] == batchDim[3])  # images must be square
     print('[info]: batch shape: %s' % str(batchDim))
-   
+
+    # create output directory if it does not already exist
     if args.outDir:
         outDir = args.outDir # overrides snapshot prefix
     else: 
@@ -197,12 +197,12 @@ def _train_network(XtrainAll, trainAll, Xvalid, yvalid, args):
     while not all_done(trainInfo.iter):
 
         #----------------------------------------
-        # This loop is over input files
+        # This loop is over training files
         #----------------------------------------
-        for ii in range(len(yall)):
+        for ii in range(len(ytrainAll)):
             if all_done(trainInfo.iter): break
 
-            Xi = Xall[ii];  yi = yall[ii]
+            Xi = XtrainAll[ii];  yi = ytrainAll[ii]
 
             #----------------------------------------
             # this loop is over examples in the current file
@@ -271,14 +271,17 @@ def _train_network(XtrainAll, trainAll, Xvalid, yvalid, args):
                     sys.stdout.flush()
 
 
-            #----------------------------------------
-            # Evaluate on the held-out data set
-            #----------------------------------------
-            Prob = predict(solver.net, Xvalid, batchDim, nSamp=5)
-            Mu = np.mean(Prob, axis=2)
-            Yhat = np.argmax(Mu, axis=1)
-            acc = 100.0 * np.sum(Yhat == yvalid)  / yvalid.shape 
-            print "[info]: accuracy on validation data set: %0.3f" % acc
+        #----------------------------------------
+        # Evaluate on the held-out data set
+        #----------------------------------------
+        Prob = predict(solver.net, Xvalid, batchDim, nSamp=5)
+        Mu = np.mean(Prob, axis=2)
+        Yhat = np.argmax(Mu, axis=1)
+        acc = 100.0 * np.sum(Yhat == yvalid)  / yvalid.shape 
+        print "***********************"
+        print "[info]: accuracy on validation data set: %0.3f" % acc
+        print "***********************"
+
 
     print('[info]: training complete.')
 
@@ -353,6 +356,8 @@ def predict(net, X, batchDim, nSamp=30):
 def _deploy_network(args):
     """ Runs Caffe in deploy mode (where there is no solver).
     """
+
+    raise RuntimeError('TODO: implement this!!')
 
     #----------------------------------------
     # parse information from the prototxt files
@@ -470,12 +475,11 @@ if __name__ == "__main__":
     
     # Do either training or deployment
     if args.mode == 'train':
-        if len(y) <= 1:
+        if len(yall) <= 1:
             raise RuntimeError('for training, expect at least 2 files!')
-        _train_network(Xall[0:-2], yall[0:-2], 
-                Xall[-1], yall[-1], args)
+        Prob = _train_network(Xall[0:-1], yall[0:-1], Xall[-1], yall[-1], args)
     else:
-        if len(y) > 1:
+        if len(yall) > 1:
             raise RuntimeError('for deployment, expect only 1 file!')
         _deploy_network(Xall[0], yall[0], args)
 
