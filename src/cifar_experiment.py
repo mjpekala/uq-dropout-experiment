@@ -1,5 +1,4 @@
 """ 
-
   This code supports experiments using the approach of [G&G] 
   to estimate uncertainty for held-out examples for the CIFAR-10
   data set.
@@ -9,13 +8,13 @@
   REFERENCES:
     o  Gal & Ghahramani "Dropout as a Bayesian Approximation: 
        Representing Model Uncertainty in Deep Learning"
-
 """
 
 
 __author__ = "Mike Pekala"
 __copyright__ = "Copyright 2015, JHU/APL"
 __license__ = "Apache 2.0"
+
 
 
 import sys, os, argparse, time, datetime
@@ -25,8 +24,7 @@ from random import shuffle
 import pdb
 
 import numpy as np
-import scipy
-
+from scipy.io import savemat
 
 
 
@@ -166,7 +164,7 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
 
     batchDim = pycnn.infer_data_dimensions(netFn)
     assert(batchDim[2] == batchDim[3])  # images must be square
-    print('[info]: batch shape: %s' % str(batchDim))
+    print('[train]: batch shape: %s' % str(batchDim))
 
     # create output directory if it does not already exist
     if args.outDir:
@@ -256,34 +254,40 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
                     solver.net.save(str(fn)) 
                    
                 # update learning rate
-                if trainInfo.isModeStep and ((trainInfo.iter % trainInfo.param.stepsize) ==0): 
+                if trainInfo.isModeStep and ((trainInfo.iter % trainInfo.param.stepsize) == 0): 
                     trainInfo.alpha *= trainInfo.gamma 
                
                 # display progress to stdout
                 if (trainInfo.iter % trainInfo.param.display) == 1: 
-                    print "[info]: completed iteration %d of %d" % (trainInfo.iter, trainInfo.param.max_iter) 
-                    print "[info]:     %0.2f min elapsed (%0.2f CNN min)" % (trainInfo.netTime/60., trainInfo.cnnTime/60.) 
-                    print "[info]:     alpha=%0.4e" % (trainInfo.alpha) 
+                    print "[train]: completed iteration %d of %d" % (trainInfo.iter, trainInfo.param.max_iter) 
+                    print "[train]:     %0.2f min elapsed (%0.2f CNN min)" % (trainInfo.netTime/60., trainInfo.cnnTime/60.) 
+                    print "[train]:     alpha=%0.4e" % (trainInfo.alpha) 
                     if loss: 
-                        print "[info]:     loss=%0.3f" % loss 
+                        print "[train]:     loss=%0.3f" % loss 
                     if acc: 
-                        print "[info]:     Accuracy (train volume)=%0.3f" % acc
+                        print "[train]:     Accuracy (train volume)=%0.3f" % acc
                     sys.stdout.flush()
 
 
         #----------------------------------------
         # Evaluate on the held-out data set
         #----------------------------------------
-        Prob = predict(solver.net, Xvalid, batchDim, nSamp=5)
+        if all_done(trainInfo.iter): 
+            print "[train]: Max number of iterations reached (%d)" % trainInfo.iter
+        else:
+            print "[train]: Max completed epoch (iter=%d);" % trainInfo.iter
+        print "evaluating validation data..."
+
+        Prob = predict(solver.net, Xvalid, batchDim, nSamp=30)
         Mu = np.mean(Prob, axis=2)
         Yhat = np.argmax(Mu, axis=1)
         acc = 100.0 * np.sum(Yhat == yvalid)  / yvalid.shape 
-        print "***********************"
-        print "[info]: accuracy on validation data set: %0.3f" % acc
-        print "***********************"
+        print "[train]: accuracy on validation data set: %0.3f" % acc
 
 
-    print('[info]: training complete.')
+    print('[train]: training complete.')
+    print "[train]:     %0.2f min elapsed (%0.2f CNN min)" % (trainInfo.netTime/60., trainInfo.cnnTime/60.) 
+    return Prob
 
 
 
@@ -342,11 +346,11 @@ def predict(net, X, batchDim, nSamp=30):
 
         if (lastChatter+2) < elapsed:  # notify progress every 2 min
             lastChatter = elapsed
-            print('[info]: elapsed=%0.2f min; %0.2f%% complete' % (elapsed, 100.*numEvaluated/nb))
+            print('[predict]: elapsed=%0.2f min; %0.2f%% complete' % (elapsed, 100.*numEvaluated/X.shape[0]))
             sys.stdout.flush()
 
     # done
-    print('[info]: Total time to deploy: %0.2f min (%0.2f CNN min)' % (elapsed, cnnTime/60.))
+    print('[predict]: Total time to deploy: %0.2f min (%0.2f CNN min)' % (elapsed, cnnTime/60.))
     
     return Prob
 
@@ -440,7 +444,7 @@ def _deploy_network(args):
 
     net.save(str(os.path.join(outDir, 'final.caffemodel')))
     np.save(os.path.join(outDir, 'YhatDeploy'), Prob)
-    scipy.io.savemat(os.path.join(outDir, 'YhatDeploy.mat'), {'Yhat' : Prob})
+    savemat(os.path.join(outDir, 'YhatDeploy.mat'), {'Yhat' : Prob})
 
     print('[emCNN]: deployment complete.')
 
@@ -472,16 +476,23 @@ if __name__ == "__main__":
         Xall.append(X.astype(np.float32)/255.)
 
     print('[info]: read %d CIFAR-10 files' % len(yall))
-    
+
+
     # Do either training or deployment
     if args.mode == 'train':
         if len(yall) <= 1:
             raise RuntimeError('for training, expect at least 2 files!')
         Prob = _train_network(Xall[0:-1], yall[0:-1], Xall[-1], yall[-1], args)
+
+        np.save(os.path.join(args.outDir, 'P_valid'), Prob)
+        savemat(os.path.join(args.outDir, 'P_valid.mat'), {'Prob' : Prob})
+
     else:
         if len(yall) > 1:
             raise RuntimeError('for deployment, expect only 1 file!')
-        _deploy_network(Xall[0], yall[0], args)
+        Prob = _deploy_network(Xall[0], yall[0], args)
+
+    print('[info]: all finished!')
 
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
