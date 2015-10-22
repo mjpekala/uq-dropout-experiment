@@ -1,4 +1,7 @@
 """ 
+
+  PYTHONPATH=~/Apps/caffe/python python cifar_experiment.py \
+          --data ../data/data_batch_1.bin ../data/data_batch_2.bin
 """
 
 
@@ -24,12 +27,13 @@ def _get_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--outlier-class', dest='outlierClass', 
-		    type=int, required=True, 
+		    type=int, default=None,
 		    help='Which CIFAR class (0-9) to hold out of training')
 
-    parser.add_argument('--Z', dest='inFile', 
-		    type=str, required=True,
-		    help='CIFAR-10 input file name')
+    parser.add_argument('--data', dest='inFiles', 
+		    type=argparse.FileType('r'), required=True,
+                    nargs='+',
+		    help='CIFAR-10 input file name(s)')
 
     parser.add_argument('--gpu', dest='gpu', 
 		    type=int, default=-1, 
@@ -39,7 +43,28 @@ def _get_args():
 		    type=str, default='', 
 		    help='(optional) overrides the snapshot directory')
 
-    return parser.parse_args()
+
+    parser.add_argument('--solver', dest='solverFile', 
+		    type=str, default=None, 
+		    help='The caffe solver file to use (=> TRAINING mode)')
+
+    parser.add_argument('--net', dest='netFile', 
+		    type=str, default=None, 
+		    help='The caffe network file to use (=> DEPLOY mode)')
+
+
+    args = parser.parse_args()
+
+
+    if args.solver is not None:
+        args.mode = 'train'
+    elif args.network is not None:
+        args.mode = 'deploy'
+    else:
+        raise RuntimeError('you must specify either a solver or a network')
+
+
+    return args
 
 
 
@@ -47,7 +72,7 @@ def _get_args():
 #-------------------------------------------------------------------------------
 
 
-def _read_cifar10_binary(fn):
+def _read_cifar10_binary(fileObj):
     """Loads a binary CIFAR 10 formatted file.
     
     Probably easier to use the python versions of these files, but for some
@@ -56,8 +81,7 @@ def _read_cifar10_binary(fn):
     This will produce images X with shape:  (3, 32, 32)
     If you want to view these with imshow, permute the dimensions to (32,32,3).
     """
-    with open(fn, 'rb') as f:
-        rawData = f.read()
+    rawData = fileObj.read()
 
     # each example is three channels of 32^2 pixels, plus one class label
     dim = 32
@@ -434,6 +458,14 @@ if __name__ == "__main__":
     else:
         caffe.set_mode_cpu()
 
+    yall = []
+    Xall = []
+    for ii in range(len(args.inFiles)):
+        X,y = _read_cifar10_binary(args.inFiles[ii])
+        yall.append(y)
+        Xall.append(Xall)
+
+    print('[info]: read %d CIFAR-10 files' % len(yall))
     
     # Do either training or deployment
     if args.mode == 'train':
