@@ -26,7 +26,7 @@ class TestCifar10Experiment(unittest.TestCase):
 
         # Make sure data omission works as expected.
         yAll = np.zeros((10,))
-        for Xi, yi, n in ce._minibatch_generator(X, y, nBatch=100, yOmit=[0,]):
+        for Xi, yi, n in ce._minibatch_generator(X, y, 100, yOmit=[0,]):
             yi = yi[0:n]
             for label in np.unique(yi):
                 yAll[label] += np.sum(yi == label)
@@ -37,7 +37,7 @@ class TestCifar10Experiment(unittest.TestCase):
 
         # If we omit no data, should hit all the points
         yAll = np.zeros((10,))
-        for Xi, yi, n in ce._minibatch_generator(X, y, nBatch=100, yOmit=[]):
+        for Xi, yi, n in ce._minibatch_generator(X, y, 100, yOmit=[]):
             yi = yi[0:n]
             for label in np.unique(yi):
                 yAll[label] += np.sum(yi == label)
