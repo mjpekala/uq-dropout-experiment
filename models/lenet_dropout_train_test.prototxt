@@ -1,26 +1,19 @@
 name: "LeNet_dropout"
+
 layer {
-  name: "cifar"
-  type: "Data"
+  type: "MemoryData"
+  name: "data"
   top: "data"
   top: "label"
-  data_param {
-    source: "../data/cifar10_dsn/cifar10_gcn-leveldb/cifar-train-leveldb"
-    batch_size: 128
+  memory_data_param {
+    batch_size:  128
+    channels:    3
+    height:      32
+    width:       32
   }
-  include: { phase: TRAIN }
 }
-layer {
-  name: "cifar"
-  type: "Data"
-  top: "data"
-  top: "label"
-  data_param {
-    source: "../data/cifar10_dsn/cifar10_gcn-leveldb/cifar-test-leveldb"
-    batch_size: 100
-  }
-  include: { phase: TEST }
-}
+
+
 layer {
   name: "conv1"
   type: "Convolution"
@@ -123,7 +116,7 @@ layer {
   top: "drop1"
   dropout_param {
     dropout_ratio: 0.5
-    #sample_weights_test: true
+    do_mc: true
   }
 }
 layer {
@@ -163,4 +156,13 @@ layer {
   bottom: "ip2"
   bottom: "label"
   top: "loss"
+}
+
+# This last layer is only so we can extract probability estimates
+# without needing a separate "deploy" file
+layer {
+  name: "prob"
+  type: "Softmax"
+  bottom: "ip2"
+  top: "prob"
 }
