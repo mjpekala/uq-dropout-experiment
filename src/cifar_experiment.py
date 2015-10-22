@@ -1,7 +1,15 @@
 """ 
 
-  PYTHONPATH=~/Apps/caffe/python python cifar_experiment.py \
-          --data ../data/data_batch_1.bin ../data/data_batch_2.bin
+  This code supports experiments using the approach of [G&G] 
+  to estimate uncertainty for held-out examples for the CIFAR-10
+  data set.
+
+  See the Makefile for examples of how to use this script.
+
+  REFERENCES:
+    o  Gal & Ghahramani "Dropout as a Bayesian Approximation: 
+       Representing Model Uncertainty in Deep Learning"
+
 """
 
 
@@ -21,13 +29,15 @@ import scipy
 
 
 
+
+
 def _get_args():
     """Parse command line arguments
     """
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--outlier-class', dest='outlierClass', 
-		    type=int, default=None,
+		    type=int, default=-1,
 		    help='Which CIFAR class (0-9) to hold out of training')
 
     parser.add_argument('--data', dest='inFiles', 
@@ -44,11 +54,11 @@ def _get_args():
 		    help='(optional) overrides the snapshot directory')
 
 
-    parser.add_argument('--solver', dest='solverFile', 
+    parser.add_argument('--solver', dest='solver', 
 		    type=str, default=None, 
 		    help='The caffe solver file to use (=> TRAINING mode)')
 
-    parser.add_argument('--net', dest='netFile', 
+    parser.add_argument('--net', dest='network', 
 		    type=str, default=None, 
 		    help='The caffe network file to use (=> DEPLOY mode)')
 
@@ -109,7 +119,7 @@ def _read_cifar10_binary(fileObj):
 
 
 
-def _minibatch_generator(X, y, nBatch=100, yOmit=[], randomOrder=True):
+def _minibatch_generator(X, y, nBatch, yOmit=[], randomOrder=True):
     """Generator that returns subsets (mini-batches) of the provided data set.
 
     We could also add data augmentation here, but for not this isn't necessary.
@@ -140,7 +150,7 @@ def _minibatch_generator(X, y, nBatch=100, yOmit=[], randomOrder=True):
         
 
 
-def _train_network(args):
+def _train_network(XtrainAll, trainAll, Xvalid, yvalid, args):
     """ Main CNN training loop.
 
     Creates PyCaffe objects and calls train_one_epoch until done.
@@ -155,23 +165,16 @@ def _train_network(args):
     netParam = caffe_pb2.NetParameter()
     text_format.Merge(open(netFn).read(), netParam)
 
-    batchDim = emlib.infer_data_dimensions(netFn)
-    assert(batchDim[2] == batchDim[3])  # tiles must be square
-    print('[emCNN]: batch shape: %s' % str(batchDim))
+    batchDim = pycnn.infer_data_dimensions(netFn)
+    assert(batchDim[2] == batchDim[3])  # images must be square
+    print('[info]: batch shape: %s' % str(batchDim))
    
     if args.outDir:
         outDir = args.outDir # overrides snapshot prefix
     else: 
         outDir = str(solverParam.snapshot_prefix)   # unicode -> str
     if not os.path.isdir(outDir):
-        os.mkdir(outDir)
-
-    # choose a synthetic data generating function
-    if args.rotateData:
-        syn_func = lambda V: _xform_minibatch(V, True)
-        print('[emCNN]:   WARNING: applying arbitrary rotations to data.  This may degrade performance in some cases...\n')
-    else:
-        syn_func = lambda V: _xform_minibatch(V, False)
+        os.makedirs(outDir)
 
 
     #----------------------------------------
@@ -179,173 +182,169 @@ def _train_network(args):
     # Note this assumes a relatively recent PyCaffe
     #----------------------------------------
     solver = caffe.SGDSolver(args.solver)
-    _print_net(solver.net)
-
-    #----------------------------------------
-    # Load data
-    #----------------------------------------
-    bs = border_size(batchDim)
-    print "[emCNN]: tile radius is: %d" % bs
-    
-    print "[emCNN]: loading training data..."
-    Xtrain, Ytrain = _load_data(args.emTrainFile,
-            args.labelsTrainFile,
-            tileRadius=bs,
-            onlySlices=args.trainSlices,
-            omitLabels=args.omitLabels)
-    
-    print "[emCNN]: loading validation data..."
-    Xvalid, Yvalid = _load_data(args.emValidFile,
-            args.labelsValidFile,
-            tileRadius=bs,
-            onlySlices=args.validSlices,
-            omitLabels=args.omitLabels)
-
-    #----------------------------------------
-    # Do training; save results
-    #----------------------------------------
-    trainInfo = TrainInfo(solverParam)
+    pycnn.print_net(solver.net)
     sys.stdout.flush()
 
-    while trainInfo.iter < solverParam.max_iter: 
-        print "[emCNN]: Starting epoch %d" % trainInfo.epoch
-        train_one_epoch(solver, Xtrain, Ytrain, 
-            trainInfo, batchDim, outDir, 
-            omitLabels=args.omitLabels,
-            data_augment=syn_func)
-
-        print "[emCNN]: Making predictions on validation data..."
-        Mask = np.ones(Xvalid.shape, dtype=np.bool)
-        Mask[Yvalid<0] = False
-        Prob = predict(solver.net, Xvalid, Mask, batchDim)
-
-        # discard mirrored edges and form class estimates
-        Yhat = np.argmax(Prob, 0) 
-        Yhat[Mask==False] = -1;
-        Prob = prune_border_4d(Prob, bs)
-        Yhat = prune_border_3d(Yhat, bs)
-
-        # compute some metrics
-        print('[emCNN]: Validation set performance:')
-        emlib.metrics(prune_border_3d(Yvalid, bs), Yhat, display=True)
-
-        trainInfo.epoch += 1
- 
-    solver.net.save(str(os.path.join(outDir, 'final.caffemodel')))
-    np.save(os.path.join(outDir, 'Yhat.npz'), Prob)
-    scipy.io.savemat(os.path.join(outDir, 'Yhat.mat'), {'Yhat' : Prob})
-    print('[emCNN]: training complete.')
+    trainInfo = pycnn.TrainInfo(solverParam)
+    all_done = lambda x: x >= solverParam.max_iter
 
 
+    #----------------------------------------
+    # Do training
+    #----------------------------------------
+    tic = time.time()
 
-#-------------------------------------------------------------------------------
-# Functions for "deploying" a CNN (i.e. forward pass only)
-#-------------------------------------------------------------------------------
+    while not all_done(trainInfo.iter):
+
+        #----------------------------------------
+        # This loop is over input files
+        #----------------------------------------
+        for ii in range(len(yall)):
+            if all_done(trainInfo.iter): break
+
+            Xi = Xall[ii];  yi = yall[ii]
+
+            #----------------------------------------
+            # this loop is over examples in the current file
+            #----------------------------------------
+            for Xb, yb, nb in _minibatch_generator(Xi, yi, batchDim[0], yOmit=[args.outlierClass,]):
+                if all_done(trainInfo.iter): break 
+                
+                # convert labels to a 4d tensor 
+                ybTensor = np.ascontiguousarray(yb[:, np.newaxis, np.newaxis, np.newaxis]) 
+                assert(not np.any(np.isnan(Xb))) 
+                assert(not np.any(np.isnan(yb))) 
+                
+                #---------------------------------------- 
+                # one forward/backward pass and update weights 
+                #---------------------------------------- 
+                _tmp = time.time() 
+                solver.net.set_input_arrays(Xb, ybTensor) 
+                out = solver.net.forward() 
+                solver.net.backward() 
+
+                # SGD with momentum 
+                for lIdx, layer in enumerate(solver.net.layers): 
+                    for bIdx, blob in enumerate(layer.blobs): 
+                        if np.any(np.isnan(blob.diff)): 
+                            raise RuntimeError("NaN detected in gradient of layer %d" % lIdx) 
+                        key = (lIdx, bIdx) 
+                        V = trainInfo.V.get(key, 0.0) 
+                        Vnext = (trainInfo.mu * V) - (trainInfo.alpha * blob.diff)
+                        blob.data[...] += Vnext 
+                        trainInfo.V[key] = Vnext 
+                        
+                # (try to) extract some useful info from the net 
+                loss = out.get('loss', None) 
+                acc = out.get('acc', None) 
+                
+                # update run statistics 
+                trainInfo.cnnTime += time.time() - _tmp 
+                trainInfo.iter += 1 
+                trainInfo.netTime += (time.time() - tic) 
+                tic = time.time() 
+               
+
+                #---------------------------------------- 
+                # Some events occur on regular intervals.
+                # Handle those here...
+                #---------------------------------------- 
+
+                # save model snapshot
+                if (trainInfo.iter % trainInfo.param.snapshot) == 0: 
+                    fn = os.path.join(outDir, 'iter_%06d.caffemodel' % trainInfo.iter) 
+                    solver.net.save(str(fn)) 
+                   
+                # update learning rate
+                if trainInfo.isModeStep and ((trainInfo.iter % trainInfo.param.stepsize) ==0): 
+                    trainInfo.alpha *= trainInfo.gamma 
+               
+                # display progress to stdout
+                if (trainInfo.iter % trainInfo.param.display) == 1: 
+                    print "[info]: completed iteration %d of %d" % (trainInfo.iter, trainInfo.param.max_iter) 
+                    print "[info]:     %0.2f min elapsed (%0.2f CNN min)" % (trainInfo.netTime/60., trainInfo.cnnTime/60.) 
+                    print "[info]:     alpha=%0.4e" % (trainInfo.alpha) 
+                    if loss: 
+                        print "[info]:     loss=%0.3f" % loss 
+                    if acc: 
+                        print "[info]:     Accuracy (train volume)=%0.3f" % acc
+                    sys.stdout.flush()
 
 
-def predict(net, X, Mask, batchDim, nMC=0):
+            #----------------------------------------
+            # Evaluate on the held-out data set
+            #----------------------------------------
+            Prob = predict(solver.net, Xvalid, batchDim, nSamp=5)
+            Mu = np.mean(Prob, axis=2)
+            Yhat = np.argmax(Mu, axis=1)
+            acc = 100.0 * np.sum(Yhat == yvalid)  / yvalid.shape 
+            print "[info]: accuracy on validation data set: %0.3f" % acc
+
+    print('[info]: training complete.')
+
+
+
+
+def predict(net, X, batchDim, nSamp=30):
     """Generates predictions for a data volume.
 
     PARAMETERS:
       X        : a data volume/tensor with dimensions (#slices, height, width)
-      Mask     : a boolean tensor with the same size as X.  Only positive
-                 elements will be classified.  The prediction for all 
-                 negative elements will be -1.  Use this to run predictions
-                 on a subset of the volume.
       batchDim : a tuple of the form (#classes, minibatchSize, height, width)
 
     """    
-    # *** This code assumes a layer called "prob"
+    # *** This code assumes a softmax layer called "prob" with 
+    # a single output of the same name
     if 'prob' not in net.blobs: 
         raise RuntimeError("Can't find a layer called 'prob'")
 
-    print "[emCNN]: Evaluating %0.2f%% of cube" % (100.0*np.sum(Mask)/numel(Mask)) 
 
     # Pre-allocate some variables & storage.
-    #
-    tileRadius = int(batchDim[2]/2)
-    Xi = np.zeros(batchDim, dtype=np.float32)
-    yi = np.zeros((batchDim[0],), dtype=np.float32)
     nClasses = net.blobs['prob'].data.shape[1]
-
-    # if we don't evaluate all pixels, the 
-    # ones not evaluated will have label -1
-    if nMC <= 0: 
-        Prob = -1*np.ones((nClasses, X.shape[0], X.shape[1], X.shape[2]))
-    else:
-        Prob = -1*np.ones((nMC, X.shape[0], X.shape[1], X.shape[2]))
-        print "[emCNN]: Generating %d MC samples for class 0" % nMC
-        if nClasses > 2: 
-            print "[emCNN]: !!!WARNING!!! nClasses > 2 but we are only extracting MC samples for class 0 at this time..."
-
+    Prob = -1*np.ones( (X.shape[0], nClasses, nSamp) )
+    Prob_mb = np.zeros( (batchDim[0], nClasses, nSamp) )
+    yDummy = np.zeros((X.shape[0],), dtype=np.float32)
 
     # do it
     startTime = time.time()
     cnnTime = 0
+    numEvaluated = 0
     lastChatter = -2
-    it = emlib.interior_pixel_generator(X, tileRadius, batchDim[0], mask=Mask)
 
-    for Idx, epochPct in it: 
-        # Extract subtiles from validation data set 
-        for jj in range(Idx.shape[0]): 
-            a = Idx[jj,1] - tileRadius 
-            b = Idx[jj,1] + tileRadius + 1 
-            c = Idx[jj,2] - tileRadius 
-            d = Idx[jj,2] + tileRadius + 1 
-            Xi[jj, 0, :, :] = X[ Idx[jj,0], a:b, c:d ]
-            yi[jj] = 0  # this is just a dummy value
+    for Xb, yb, nb in _minibatch_generator(X, yDummy, batchDim[0], yOmit=[], randomOrder=False):
+        # convert labels to a 4d tensor 
+        ybTensor = np.ascontiguousarray(yb[:, np.newaxis, np.newaxis, np.newaxis]) 
+        assert(not np.any(np.isnan(Xb))) 
+        assert(not np.any(np.isnan(yb))) 
+                
+        # Generate MC-based uncertainty estimates
+        # (instead of just a single point estimate)
+        _tmp = time.time() 
+        net.set_input_arrays(Xb, yb)
 
-        #---------------------------------------- 
-        # forward pass only (i.e. no backward pass)
-        #----------------------------------------
-        if nMC <= 0: 
-            # this is the typical case - just one forward pass
-            _tmp = time.time() 
-            net.set_input_arrays(Xi, yi)
+        # do nMC forward passes and save the probability estimate
+        # for class 0.
+        for ii in range(nSamp): 
             out = net.forward() 
-            cnnTime += time.time() - _tmp 
-            
-            # On some version of Caffe, Prob is (batchSize, nClasses, 1, 1) 
-            # On newer versions, it is natively (batchSize, nClasses) 
-            # The squeeze here is to accommodate older versions 
-            ProbBatch = np.squeeze(out['prob']) 
-            
-            # store the per-class probability estimates.  
-            # 
-            # * On the final iteration, the size of Prob  may not match 
-            #   the remaining space in Yhat (unless we get lucky and the 
-            #   data cube size is a multiple of the mini-batch size).  
-            #   This is why we slice yijHat before assigning to Yhat. 
-            for jj in range(nClasses): 
-                pj = ProbBatch[:,jj]      # get probabilities for class j 
-                assert(len(pj.shape)==1)  # should be a vector (vs tensor) 
-                Prob[jj, Idx[:,0], Idx[:,1], Idx[:,2]] = pj[:Idx.shape[0]]   # (*)
-        else:
-            # Generate MC-based uncertainty estimates
-            # (instead of just a single point estimate)
-            _tmp = time.time() 
-            net.set_input_arrays(Xi, yi)
+            Prob_mb[:,:,ii] = np.squeeze(out['prob'])
+        cnnTime += time.time() - _tmp 
+      
+        # put the estimates for this mini-batch into the larger overall 
+        # return value.
+        Prob[numEvaluated:(numEvaluated+nb),:,:] = Prob_mb[0:nb,:,:]
 
-            # do nMC forward passes and save the probability estimate
-            # for class 0.
-            for ii in range(nMC): 
-                out = net.forward() 
-                ProbBatch = np.squeeze(out['prob']) 
-                p0 = ProbBatch[:,0]      # get probabilities for class 0
-                assert(len(p0.shape)==1)  # should be a vector (vs tensor) 
-                Prob[ii, Idx[:,0], Idx[:,1], Idx[:,2]] = p0[:Idx.shape[0]]   # (*)
-            cnnTime += time.time() - _tmp 
-            
 
         elapsed = (time.time() - startTime) / 60.0
+        numEvaluated += nb
 
         if (lastChatter+2) < elapsed:  # notify progress every 2 min
             lastChatter = elapsed
-            print('[emCNN]: elapsed=%0.2f min; %0.2f%% complete' % (elapsed, 100.*epochPct))
+            print('[info]: elapsed=%0.2f min; %0.2f%% complete' % (elapsed, 100.*numEvaluated/nb))
             sys.stdout.flush()
 
     # done
-    print('[emCNN]: Total time to evaluate cube: %0.2f min (%0.2f CNN min)' % (elapsed, cnnTime/60.))
+    print('[info]: Total time to deploy: %0.2f min (%0.2f CNN min)' % (elapsed, cnnTime/60.))
+    
     return Prob
 
 
@@ -447,6 +446,7 @@ if __name__ == "__main__":
     args = _get_args()
     print(args)
 
+    import pycnn
     import caffe
     from caffe.proto import caffe_pb2
     from google.protobuf import text_format
@@ -458,20 +458,26 @@ if __name__ == "__main__":
     else:
         caffe.set_mode_cpu()
 
+    # load the data set
     yall = []
     Xall = []
     for ii in range(len(args.inFiles)):
         X,y = _read_cifar10_binary(args.inFiles[ii])
-        yall.append(y)
-        Xall.append(Xall)
+        yall.append(y.astype(np.float32))
+        Xall.append(X.astype(np.float32)/255.)
 
     print('[info]: read %d CIFAR-10 files' % len(yall))
     
     # Do either training or deployment
     if args.mode == 'train':
-        _train_network(args)
+        if len(y) <= 1:
+            raise RuntimeError('for training, expect at least 2 files!')
+        _train_network(Xall[0:-2], yall[0:-2], 
+                Xall[-1], yall[-1], args)
     else:
-        _deploy_network(args)
+        if len(y) > 1:
+            raise RuntimeError('for deployment, expect only 1 file!')
+        _deploy_network(Xall[0], yall[0], args)
 
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
