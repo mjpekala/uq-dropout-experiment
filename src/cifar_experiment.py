@@ -472,7 +472,8 @@ def _deploy_network(X, y, args):
     print "[train]: accuracy on test data set: %0.3f" % acc
 
     np.save(os.path.join(outDir, 'ProbDeploy'), Prob)
-    savemat(os.path.join(outDir, 'ProbDeploy.mat'), {'Prob' : Prob})
+    np.save(os.path.join(outDir, 'yDeploy'), y)
+    savemat(os.path.join(outDir, 'Deploy.mat'), {'Prob' : Prob, 'y' : y})
 
     print('[deploy]: deployment complete.')
 
