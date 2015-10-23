@@ -214,9 +214,10 @@ def _eval_performance(Prob, yTrue):
 
     Mu = np.mean(Prob, axis=2)
     Yhat = np.argmax(Mu, axis=1)
-    acc = 100.0 * np.sum(Yhat == yvalid)  / yvalid.shape 
+    acc = 100.0 * np.sum(Yhat == yTrue)  / yTrue.shape 
 
     # TODO: per-class accuracy
+
     return acc
 
 
