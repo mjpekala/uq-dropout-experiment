@@ -23,6 +23,7 @@ __license__ = "Apache 2.0"
 
 
 import sys, os, argparse, time, datetime, re
+import copy
 import struct
 from pprint import pprint
 from random import shuffle
@@ -232,16 +233,12 @@ class TrainInfo:
     """
     Parameters used during CNN training
     (some of these change as training progresses...)
+
     """
 
     def __init__(self, solverParam):
-        self.param = solverParam
-
-        self.isModeStep = (solverParam.lr_policy == u'step')
-
-        # This code only supports some learning strategies
-        if not self.isModeStep:
-            raise ValueError('Sorry - I only support step policy at this time')
+        self.param = copy.deepcopy(solverParam)
+        assert(self.param.gamma > 0)
 
         if (solverParam.solver_type != solverParam.SolverType.Value('SGD')):
             raise ValueError('Sorry - I only support SGD at this time')
@@ -252,6 +249,7 @@ class TrainInfo:
         self.epoch = 0
         self.cnnTime = 0
         self.netTime = 0
+        self.V = {}          # := previous update values (for momentum)
 
         #--------------------------------------------------
         # SGD parameters.  SGD with momentum is of the form:
@@ -263,18 +261,40 @@ class TrainInfo:
         # Ref: http://caffe.berkeleyvision.org/tutorial/solver.html
         #
         #--------------------------------------------------
-        self.alpha = solverParam.base_lr  # := learning rate
-        self.mu = solverParam.momentum    # := momentum
-        self.gamma = solverParam.gamma    # := step factor
-        self.V = {}                       # := previous values (for momentum)
 
-        assert(self.alpha > 0)
-        assert(self.gamma > 0)
-        assert(self.mu >= 0)
-
-
-        # XXX: weight decay
         # XXX: layer-specific weights
+
+
+    def get_learn_rate(self):
+        """
+        From an older version of Caffe (evidently):
+
+        from https://github.com/BVLC/caffe/blob/master/src/caffe/solver.cpp :
+     
+          The currently implemented learning rate policies are:
+           - fixed: always return base_lr.
+           - step: return base_lr * gamma ^ (floor(iter / step))
+           - exp: return base_lr * gamma ^ iter
+           - inv: return base_lr * (1 + gamma * iter) ^ (- power)
+           - multistep: similar to step but it allows non uniform steps defined by
+           stepvalue
+           - poly: the effective learning rate follows a polynomial decay, to be
+           zero by the max_iter. return base_lr (1 - iter/max_iter) ^ (power)
+           - sigmoid: the effective learning rate follows a sigmod decay
+           return base_lr ( 1/(1 + exp(-gamma * (iter - stepsize))))
+           
+           where base_lr, max_iter, gamma, step, stepvalue and power are defined
+           in the solver parameter protocol buffer, and iter is the current iter
+        """
+        if self.param.lr_policy == u'step':
+            _tmp = self.param.gamma ** (np.floor(self.iter/self.param.stepsize))
+            return self.param.base_lr * _tmp
+        elif self.param.lr_policy == u'inv':
+            _tmp = (1.0 + self.param.gamma * self.iter) ** (-1.0*self.param.power)
+            return self.param.base_lr * _tmp;
+        else:
+            raise RuntimeError('currently unsupported learning rate policy')
+
 
 
 
@@ -351,27 +371,35 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
                 out = solver.net.forward() 
                 solver.net.backward() 
 
-                # SGD with momentum 
+                alpha = trainInfo.get_learn_rate()
                 for lIdx, layer in enumerate(solver.net.layers): 
                     for bIdx, blob in enumerate(layer.blobs): 
                         if np.any(np.isnan(blob.diff)): 
                             raise RuntimeError("NaN detected in gradient of layer %d" % lIdx) 
+                        # SGD with momentum
                         key = (lIdx, bIdx) 
                         V = trainInfo.V.get(key, 0.0) 
-                        Vnext = (trainInfo.mu * V) - (trainInfo.alpha * blob.diff)
-                        blob.data[...] += Vnext 
+                        Vnext = trainInfo.param.momentum * V - alpha * blob.diff
+                        blob.data[...] += Vnext
                         trainInfo.V[key] = Vnext 
-                        
+                       
+                        # also, weight decay (optional)
+                        # XXX: make sure it is correct to apply in this
+                        #      manner (i.e. apart from momentum)
+                        # w_i <- w_i - alpha \nabla grad - alpha * lambda * w_i
+                        if trainInfo.param.weight_decay > 0:
+                            blob.data[...] *= (1.0 - alpha * trainInfo.param.weight_decay)
+
+
                 # (try to) extract some useful info from the net 
                 loss = out.get('loss', None) 
                 acc = out.get('acc', None) 
                 
                 # update run statistics 
-                trainInfo.cnnTime += time.time() - _tmp 
                 trainInfo.iter += 1 
+                trainInfo.cnnTime += time.time() - _tmp 
                 trainInfo.netTime += (time.time() - tic) 
                 tic = time.time() 
-               
 
                 #---------------------------------------- 
                 # Some events occur on regular intervals.
@@ -382,16 +410,12 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
                 if (trainInfo.iter % trainInfo.param.snapshot) == 0: 
                     fn = os.path.join(outDir, 'iter_%06d.caffemodel' % trainInfo.iter) 
                     solver.net.save(str(fn)) 
-                   
-                # update learning rate
-                if trainInfo.isModeStep and ((trainInfo.iter % trainInfo.param.stepsize) == 0): 
-                    trainInfo.alpha *= trainInfo.gamma 
                
                 # display progress to stdout
                 if (trainInfo.iter % trainInfo.param.display) == 1: 
                     print "[train]: completed iteration %d of %d" % (trainInfo.iter, trainInfo.param.max_iter) 
                     print "[train]:     %0.2f min elapsed (%0.2f CNN min)" % (trainInfo.netTime/60., trainInfo.cnnTime/60.) 
-                    print "[train]:     alpha=%0.4e" % (trainInfo.alpha) 
+                    print "[train]:     alpha=%0.4e" % (alpha) 
                     if loss: 
                         print "[train]:     loss=%0.3f" % loss 
                     if acc: 
