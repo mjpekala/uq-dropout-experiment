@@ -34,6 +34,15 @@ train :
 		--data ./data/data_batch_1.bin ./data/data_batch_2.bin ./data/data_batch_3.bin ./data/data_batch_4.bin ./data/data_batch_5.bin
 
 
+train-all : 
+	$(PY) ./src/cifar_experiment.py \
+		--gpu $(GPU) \
+		--outlier-class -1 \
+		--solver ./models/lenet_dropout_solver.prototxt \
+		--out-dir ./results/FULL_DATASET \
+		--data ./data/data_batch_1.bin ./data/data_batch_2.bin ./data/data_batch_3.bin ./data/data_batch_4.bin ./data/data_batch_5.bin ./data/test_batch.bin
+
+
 deploy : 
 	$(PY) ./src/cifar_experiment.py \
 		--gpu $(GPU) \
