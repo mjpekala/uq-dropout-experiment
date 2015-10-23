@@ -102,9 +102,10 @@ def _read_cifar10_binary(fileObj):
     """Loads a binary CIFAR 10 formatted file.
     
     Probably easier to use the python versions of these files, but for some
-    reason having difficulty downloading these from the CIFAR website atm.
+    reason I'm having difficulty downloading these from the CIFAR website.
+    Had some binary formatted ones laying around, so using these.
 
-    This will produce images X with shape:  (3, 32, 32)
+    This function produces images X with shape:  (3, 32, 32)
     If you want to view these with imshow, permute the dimensions to (32,32,3).
     """
     rawData = fileObj.read()
@@ -120,8 +121,10 @@ def _read_cifar10_binary(fileObj):
     xAll = []
     
     for ii in xrange(0, len(rawData), nBytes):
+        # label comes first
         yAll.append(ord(rawData[ii]))
-        
+       
+        # then all pixels for each of three channels
         red = struct.unpack(fmt, rawData[(ii+1):(ii+1+dim2)])
         green = struct.unpack(fmt, rawData[(ii+1+dim2):(ii+1+2*dim2)])
         blue = struct.unpack(fmt, rawData[(ii+1+2*dim2):(ii+1+3*dim2)])
@@ -547,6 +550,9 @@ def predict(net, X, batchDim, nSamp=30):
 
 
 #-------------------------------------------------------------------------------
+# main
+#-------------------------------------------------------------------------------
+
 if __name__ == "__main__":
     args = _get_args()
     print(args)
@@ -570,7 +576,7 @@ if __name__ == "__main__":
         yall.append(y.astype(np.float32))
         Xall.append(X.astype(np.float32)/255.)
 
-    print('[info]: read %d CIFAR-10 files' % len(yall))
+    print('[main]: read %d CIFAR-10 files' % len(yall))
 
 
     # TRAIN mode
@@ -588,7 +594,7 @@ if __name__ == "__main__":
             raise RuntimeError('for deployment, expect only 1 file!')
         Prob = _deploy_network(Xall[0], yall[0], args)
 
-    print('[info]: all finished!')
+    print('[main]: all finished!')
 
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
