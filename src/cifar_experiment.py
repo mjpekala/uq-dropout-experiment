@@ -5,6 +5,11 @@
 
   See the Makefile for examples of how to use this script.
 
+  Note: since we are not currently doing any special synthetic
+  data augmentation on-the-fly, could probably use the SGD 
+  API that is available in PyCaffe (vs implementing a 
+  limited subset of SGD here).
+
   REFERENCES:
     o  Gal & Ghahramani "Dropout as a Bayesian Approximation: 
        Representing Model Uncertainty in Deep Learning"
@@ -17,11 +22,11 @@ __license__ = "Apache 2.0"
 
 
 
-import sys, os, argparse, time, datetime
+import sys, os, argparse, time, datetime, re
 import struct
 from pprint import pprint
 from random import shuffle
-import pdb
+#import pdb
 
 import numpy as np
 from scipy.io import savemat
@@ -34,10 +39,31 @@ def _get_args():
     """
     parser = argparse.ArgumentParser()
 
+    #--------------------------------------------------
+    # these args are for TRAIN mode
+    #--------------------------------------------------
+    parser.add_argument('--solver', dest='solver', 
+		    type=str, default=None, 
+		    help='The caffe solver file to use (TRAINING mode)')
+
     parser.add_argument('--outlier-class', dest='outlierClass', 
 		    type=int, default=-1,
-		    help='Which CIFAR class (0-9) to hold out of training')
+		    help='Which CIFAR class (0-9) to hold out (TRAINING mode)')
 
+    #--------------------------------------------------
+    # these args are for TEST mode
+    #--------------------------------------------------
+    parser.add_argument('--network', dest='network', 
+		    type=str, default=None, 
+		    help='The caffe network file to use (DEPLOY mode)')
+
+    parser.add_argument('--model', dest='model', 
+		    type=str, default=None, 
+		    help='The trained caffe model to use (DEPLOY mode)')
+
+    #--------------------------------------------------
+    # these args are mode-independent
+    #--------------------------------------------------
     parser.add_argument('--data', dest='inFiles', 
 		    type=argparse.FileType('r'), required=True,
                     nargs='+',
@@ -51,14 +77,9 @@ def _get_args():
 		    type=str, default='', 
 		    help='(optional) overrides the snapshot directory')
 
-
-    parser.add_argument('--solver', dest='solver', 
-		    type=str, default=None, 
-		    help='The caffe solver file to use (=> TRAINING mode)')
-
-    parser.add_argument('--net', dest='network', 
-		    type=str, default=None, 
-		    help='The caffe network file to use (=> DEPLOY mode)')
+    parser.add_argument('--num-samp', dest='nSamp', 
+		    type=int, default=30, 
+		    help='Number of stochastic forward passes to use')
 
 
     args = parser.parse_args()
@@ -75,10 +96,7 @@ def _get_args():
     return args
 
 
-
 #-------------------------------------------------------------------------------
-#-------------------------------------------------------------------------------
-
 
 def _read_cifar10_binary(fileObj):
     """Loads a binary CIFAR 10 formatted file.
@@ -117,6 +135,45 @@ def _read_cifar10_binary(fileObj):
 
 
 
+
+def print_net(net):
+    """Shows some info re. a Caffe network to stdout
+
+    net : a PyCaffe Net object.
+    """
+    for name, blobs in net.params.iteritems():
+        for bIdx, b in enumerate(blobs):
+            print("  %s[%d] : %s" % (name, bIdx, b.data.shape))
+    for ii,layer in enumerate(net.layers):
+        print("  layer %d: %s" % (ii, layer.type))
+        for jj,blob in enumerate(layer.blobs):
+            print("    blob %d has size %s" % (jj, str(blob.data.shape)))
+
+
+
+def infer_data_dimensions(netFn):
+    """Determine the size of the Caffe input data tensor.
+
+    There may be a cleaner way to do this through the pycaffe API (e.g. via the
+    network parameters protobuf object).
+    """
+    with open(netFn, 'r') as f:
+        contents = "".join(f.readlines())
+
+    dimNames = ['batch_size', 'channels', 'height', 'width']
+    dimensions = np.zeros((4,), dtype=np.int32)
+
+    for ii, dn in enumerate(dimNames):
+        pat = r'%s:\s*(\d+)' % dn
+        mo = re.search(pat, contents)
+        if mo is None:
+            raise RuntimeError('Unable to extract "%s" from network file "%s"' % (dn, netFn))
+        dimensions[ii] = int(mo.groups()[0])
+        
+    return dimensions
+
+
+
 def _minibatch_generator(X, y, nBatch, yOmit=[], randomOrder=True):
     """Generator that returns subsets (mini-batches) of the provided data set.
 
@@ -145,7 +202,76 @@ def _minibatch_generator(X, y, nBatch, yOmit=[], randomOrder=True):
         Xi[0:nThisBatch,...] = X[idx,...]
 
         yield Xi, yi, nThisBatch
-        
+
+
+
+def _eval_performance(Prob, yTrue): 
+    """
+      Prob  : a tensor with dimensions (#examples, #classes, #samples)
+      yTrue : a vector with dimensions (#examples,)
+    """
+    assert(len(Prob.shape) == 3)
+
+    Mu = np.mean(Prob, axis=2)
+    Yhat = np.argmax(Mu, axis=1)
+    acc = 100.0 * np.sum(Yhat == yvalid)  / yvalid.shape 
+
+    # TODO: per-class accuracy
+    return acc
+
+
+#-------------------------------------------------------------------------------
+# Training mode
+#-------------------------------------------------------------------------------
+
+class TrainInfo:
+    """
+    Parameters used during CNN training
+    (some of these change as training progresses...)
+    """
+
+    def __init__(self, solverParam):
+        self.param = solverParam
+
+        self.isModeStep = (solverParam.lr_policy == u'step')
+
+        # This code only supports some learning strategies
+        if not self.isModeStep:
+            raise ValueError('Sorry - I only support step policy at this time')
+
+        if (solverParam.solver_type != solverParam.SolverType.Value('SGD')):
+            raise ValueError('Sorry - I only support SGD at this time')
+
+        # keeps track of the current mini-batch iteration and how
+        # long the processing has taken so far
+        self.iter = 0
+        self.epoch = 0
+        self.cnnTime = 0
+        self.netTime = 0
+
+        #--------------------------------------------------
+        # SGD parameters.  SGD with momentum is of the form:
+        #
+        #    V_{t+1} = \mu V_t - \alpha \nablaL(W_t)
+        #    W_{t+1} = W_t + V_{t+1}
+        #
+        # where W are the weights and V the previous update.
+        # Ref: http://caffe.berkeleyvision.org/tutorial/solver.html
+        #
+        #--------------------------------------------------
+        self.alpha = solverParam.base_lr  # := learning rate
+        self.mu = solverParam.momentum    # := momentum
+        self.gamma = solverParam.gamma    # := step factor
+        self.V = {}                       # := previous values (for momentum)
+
+        assert(self.alpha > 0)
+        assert(self.gamma > 0)
+        assert(self.mu >= 0)
+
+
+        # XXX: weight decay
+        # XXX: layer-specific weights
+
 
 
 def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
@@ -162,7 +288,7 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
     netParam = caffe_pb2.NetParameter()
     text_format.Merge(open(netFn).read(), netParam)
 
-    batchDim = pycnn.infer_data_dimensions(netFn)
+    batchDim = infer_data_dimensions(netFn)
     assert(batchDim[2] == batchDim[3])  # images must be square
     print('[train]: batch shape: %s' % str(batchDim))
 
@@ -180,10 +306,10 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
     # Note this assumes a relatively recent PyCaffe
     #----------------------------------------
     solver = caffe.SGDSolver(args.solver)
-    pycnn.print_net(solver.net)
+    print_net(solver.net)
     sys.stdout.flush()
 
-    trainInfo = pycnn.TrainInfo(solverParam)
+    trainInfo = TrainInfo(solverParam)
     all_done = lambda x: x >= solverParam.max_iter
 
 
@@ -278,10 +404,8 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
             print "[train]: Completed epoch (iter=%d);" % trainInfo.iter
         print "[train]: evaluating validation data..."
 
-        Prob = predict(solver.net, Xvalid, batchDim, nSamp=30)
-        Mu = np.mean(Prob, axis=2)
-        Yhat = np.argmax(Mu, axis=1)
-        acc = 100.0 * np.sum(Yhat == yvalid)  / yvalid.shape 
+        Prob = predict(solver.net, Xvalid, batchDim, nSamp=args.nSamp)
+        acc = _eval_performance(Prob, yvalid)
         print "[train]: accuracy on validation data set: %0.3f" % acc
 
 
@@ -290,7 +414,71 @@ def _train_network(XtrainAll, ytrainAll, Xvalid, yvalid, args):
     return Prob
 
 
+#-------------------------------------------------------------------------------
+# Deploy mode
+#-------------------------------------------------------------------------------
 
+def _deploy_network(X, y, args):
+    """ Runs Caffe in deploy mode (where there is no solver).
+    """
+
+    #----------------------------------------
+    # parse information from the prototxt files
+    #----------------------------------------
+    netFn = str(args.network)  # unicode->str to avoid caffe API problems
+    netParam = caffe_pb2.NetParameter()
+    text_format.Merge(open(netFn).read(), netParam)
+
+    batchDim = infer_data_dimensions(netFn)
+    assert(batchDim[2] == batchDim[3])  # tiles must be square
+    print('[deploy]: batch shape: %s' % str(batchDim))
+
+    if args.outDir:
+        outDir = args.outDir  # overrides default
+    else: 
+        # there is no snapshot dir in a network file, so default is
+        # to just use the location of the network file.
+        outDir = os.path.dirname(args.network)
+
+    # Add a timestamped subdirectory.
+    ts = datetime.datetime.now()
+    subdir = "Deploy_%s_%02d:%02d" % (ts.date(), ts.hour, ts.minute)
+    outDir = os.path.join(outDir, subdir)
+
+    if not os.path.isdir(outDir):
+        os.makedirs(outDir)
+    print('[deploy]: writing results to: %s' % outDir)
+
+    # save the parameters we're using
+    with open(os.path.join(outDir, 'params.txt'), 'w') as f:
+        pprint(args, stream=f)
+
+    #----------------------------------------
+    # Create the Caffe network
+    # Note this assumes a relatively recent PyCaffe
+    #----------------------------------------
+    phaseTest = 1  # 1 := test mode
+    net = caffe.Net(netFn, args.model, phaseTest)
+    print_net(net)
+
+    #----------------------------------------
+    # Do deployment & save results
+    #----------------------------------------
+    sys.stdout.flush() 
+    
+    Prob = predict(net, X, batchDim, nSamp=args.nSamp) 
+    acc = _eval_performance(Prob, y) 
+    print "[train]: accuracy on test data set: %0.3f" % acc
+
+    np.save(os.path.join(outDir, 'ProbDeploy'), Prob)
+    savemat(os.path.join(outDir, 'ProbDeploy.mat'), {'Prob' : Prob})
+
+    print('[deploy]: deployment complete.')
+
+
+#-------------------------------------------------------------------------------
+# Both train and deploy make use of Caffe forward passes
+#-------------------------------------------------------------------------------
 
 def predict(net, X, batchDim, nSamp=30):
     """Generates predictions for a data volume.
@@ -356,106 +544,11 @@ def predict(net, X, batchDim, nSamp=30):
 
 
 
-
-def _deploy_network(args):
-    """ Runs Caffe in deploy mode (where there is no solver).
-    """
-
-    raise RuntimeError('TODO: implement this!!')
-
-    #----------------------------------------
-    # parse information from the prototxt files
-    #----------------------------------------
-    netFn = str(args.network)  # unicode->str to avoid caffe API problems
-    netParam = caffe_pb2.NetParameter()
-    text_format.Merge(open(netFn).read(), netParam)
-
-    batchDim = emlib.infer_data_dimensions(netFn)
-    assert(batchDim[2] == batchDim[3])  # tiles must be square
-    print('[emCNN]: batch shape: %s' % str(batchDim))
-
-    if args.outDir:
-        outDir = args.outDir  # overrides default
-    else: 
-        # there is no snapshot dir in a network file, so default is
-        # to just use the location of the network file.
-        outDir = os.path.dirname(args.network)
-
-    # Add a timestamped subdirectory.
-    ts = datetime.datetime.now()
-    subdir = "Deploy_%s_%02d:%02d" % (ts.date(), ts.hour, ts.minute)
-    outDir = os.path.join(outDir, subdir)
-
-    if not os.path.isdir(outDir):
-        os.makedirs(outDir)
-    print('[emCNN]: writing results to: %s' % outDir)
-
-    # save the parameters we're using
-    with open(os.path.join(outDir, 'params.txt'), 'w') as f:
-        pprint(args, stream=f)
-
-    #----------------------------------------
-    # Create the Caffe network
-    # Note this assumes a relatively recent PyCaffe
-    #----------------------------------------
-    phaseTest = 1  # 1 := test mode
-    net = caffe.Net(netFn, args.model, phaseTest)
-    _print_net(net)
-
-    #----------------------------------------
-    # Load data
-    #----------------------------------------
-    bs = border_size(batchDim)
-    print "[emCNN]: loading deploy data..."
-    Xdeploy = _load_data(args.emDeployFile,
-                         None,
-                         tileRadius=bs,
-                         onlySlices=args.deploySlices)
-    print "[emCNN]: tile radius is: %d" % bs
-
-    # Create a mask volume (vs list of labels to omit) due to API of emlib
-    if args.evalPct < 1: 
-        Mask = np.zeros(Xdeploy.shape, dtype=np.bool)
-        m = Xdeploy.shape[-2]
-        n = Xdeploy.shape[-1]
-        nToEval = np.round(args.evalPct*m*n).astype(np.int32)
-        idx = sobol(2, nToEval ,0)
-        idx[0] = np.floor(m*idx[0])
-        idx[1] = np.floor(n*idx[1])
-        idx = idx.astype(np.int32)
-        Mask[:,idx[0], idx[1]] = True
-        pct = 100.*np.sum(Mask) / Mask.size
-        print("[emCNN]: subsampling volume...%0.2f%% remains" % pct)
-    else:
-        Mask = np.ones(Xdeploy.shape, dtype=np.bool)
-
-    #----------------------------------------
-    # Do deployment & save results
-    #----------------------------------------
-    sys.stdout.flush()
-
-    if args.nMC < 0: 
-        Prob = predict(net, Xdeploy, Mask, batchDim)
-    else:
-        Prob = predict(net, Xdeploy, Mask, batchDim, nMC=args.nMC)
-
-    # discard mirrored edges 
-    Prob = prune_border_4d(Prob, bs)
-
-    net.save(str(os.path.join(outDir, 'final.caffemodel')))
-    np.save(os.path.join(outDir, 'YhatDeploy'), Prob)
-    savemat(os.path.join(outDir, 'YhatDeploy.mat'), {'Yhat' : Prob})
-
-    print('[emCNN]: deployment complete.')
-
-
-
 #-------------------------------------------------------------------------------
 if __name__ == "__main__":
     args = _get_args()
     print(args)
 
-    import pycnn
     import caffe
     from caffe.proto import caffe_pb2
     from google.protobuf import text_format
@@ -478,7 +571,7 @@ if __name__ == "__main__":
     print('[info]: read %d CIFAR-10 files' % len(yall))
 
 
-    # Do either training or deployment
+    # TRAIN mode
     if args.mode == 'train':
         if len(yall) <= 1:
             raise RuntimeError('for training, expect at least 2 files!')
@@ -487,6 +580,7 @@ if __name__ == "__main__":
         np.save(os.path.join(args.outDir, 'P_valid'), Prob)
         savemat(os.path.join(args.outDir, 'P_valid.mat'), {'Prob' : Prob})
 
+    # DEPLOY mode
     else:
         if len(yall) > 1:
             raise RuntimeError('for deployment, expect only 1 file!')
