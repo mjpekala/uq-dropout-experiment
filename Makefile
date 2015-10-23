@@ -1,14 +1,15 @@
 #  Use this to run UQ experiments with dropout for CIFAR-10
 #  
-#  EXAMPLE: train a few models, holding out a different class
-#           each time:
-#
+#  1. train models, with different classes held out:
+#  
 #           nohup make GPU=1 HOLD_OUT=1 train &> nohup.train.1 &
 #           nohup make GPU=2 HOLD_OUT=2 train &> nohup.train.2 &
-#           nohup make GPU=3 HOLD_OUT=3 train &> nohup.train.3 &
-#           nohup make GPU=4 HOLD_OUT=4 train &> nohup.train.4 &
-#           nohup make GPU=5 HOLD_OUT=5 train &> nohup.train.5 &
-#           nohup make GPU=6 HOLD_OUT=6 train &> nohup.train.6 &
+#           ...
+#
+#  2. evaluate models on test data (after step 1 finishes):
+#           make GPU=1 HOLD_OUT=1 deploy
+#           ...
+#
 #
 #  Oct 2015, mjp
 
