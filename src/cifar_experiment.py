@@ -500,7 +500,7 @@ def _deploy_network(X, y, args):
 
     np.save(os.path.join(outDir, 'ProbDeploy'), Prob)
     np.save(os.path.join(outDir, 'yDeploy'), y)
-    savemat(os.path.join(outDir, 'Deploy.mat'), {'Prob' : Prob, 'y' : y})
+    savemat(os.path.join(outDir, 'Deploy.mat'), {'Prob' : Prob, 'y' : y, 'X' : X})
 
     print('[deploy]: deployment complete.')
 
