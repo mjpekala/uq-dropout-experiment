@@ -18,7 +18,8 @@ PY=PYTHONPATH=~/Apps/caffe/python:./src python
 
 GPU=1
 HOLD_OUT=0
-MODEL=iter_044000.caffemodel
+MODEL=iter_080000.caffemodel
+N_SAMP=100
 
 #-------------------------------------------------------------------------------
 
@@ -48,5 +49,6 @@ deploy :
 		--gpu $(GPU) \
 		--network ./models/lenet_dropout_train_test.prototxt \
 		--model ./results/HOLDOUT_$(HOLD_OUT)/$(MODEL) \
+		--num-samp $(N_SAMP) \
 		--out-dir ./results/HOLDOUT_$(HOLD_OUT) \
 		--data ./data/test_batch.bin
