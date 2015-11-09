@@ -2,13 +2,13 @@
 %
 %
 
-load('Deploy.mat');  % creates 'X', 'y', 'Prob'
-X = permute(X, [3, 4, 2, 1]);
-
-tau = 50; % TODO: choose this properly
 
 classes = {'plane', 'auto', 'bird', 'cat', 'deer', ...
            'dog', 'frog', 'horse', 'ship', 'truck'};
+
+load('Deploy.mat');  % creates 'X', 'y', 'Prob'
+X = permute(X, [3, 4, 2, 1]);  % python -> matlab canonical ordering
+tau = 50; % TODO: choose this properly
 
 Mu = mean(Prob,3);
 [~,yHatOneBased] = max(Mu,[],2);
@@ -73,6 +73,7 @@ grid on;
 
 
 
+
 %-------------------------------------------------------------------------------
 % Visualize a few covariance matrices
 %-------------------------------------------------------------------------------
@@ -101,6 +102,4 @@ for ii = 1:2
     imagesc(Cov); colorbar;
     set(gca, 'YTick', 1:10, 'YTickLabel', classes);
     set(gca, 'XTick', 1:10, 'XTickLabel', classes);
-
-    pause()
 end
