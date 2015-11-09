@@ -35,7 +35,7 @@ Once you have the data, you can use the provided [Makefile](./Makefile) to train
     nohup make GPU=1 HOLD_OUT=1 train &> nohup.train.1 &
     nohup make GPU=2 HOLD_OUT=2 train &> nohup.train.2 &
     ...
-	```
+```
 
 Once these models have trained, you can evaluate (i.e. carry out stochastic forward passes) via
 ```
