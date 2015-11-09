@@ -8,7 +8,9 @@
   Note: since we are not currently doing any special synthetic
   data augmentation on-the-fly, could probably use the SGD 
   API that is available in PyCaffe (vs implementing a 
-  limited subset of SGD here).
+  limited subset of SGD here).  Note that we could also use the
+  improved Python-SGD implementation that's available in my
+  faster-membranes repository...
 
   REFERENCES:
     o  Gal & Ghahramani "Dropout as a Bayesian Approximation: 
