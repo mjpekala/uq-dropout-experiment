@@ -10,15 +10,22 @@ load('Deploy.mat');  % creates 'X', 'y', 'Prob'
 X = permute(X, [3, 4, 2, 1]);  % python -> matlab canonical ordering
 tau = 50; % TODO: choose this properly
 
-Mu = mean(Prob,3);
+%-------------------------------------------------------------------------------
+% Measures of uncertainty
+%-------------------------------------------------------------------------------
+% See the october version of Gal&Ghahramani for the
+% variation ratio discussion.
+[~,ArgMax] = max(Prob,[], 2);  ArgMax = squeeze(ArgMax);
+yHatOneBased = mode(ArgMax, 2);
+yHat = yHatOneBased - 1;  % the -1 is because y \in [0,9]
 
-% The class estimate is the one with maximum mean.
-% Need to correct for fact that matlab is 1-indexed.
-[muMax, yHatOneBased] = max(Mu,[],2); 
-yHat = yHatOneBased - 1;
+variationRatio = 1 - sum(bsxfun(@eq, ArgMax, yHatOneBased), 2) / size(ArgMax,2);
 
 
+
+%-------------------------------------------------------------------------------
 % Some standard classification metrics
+%-------------------------------------------------------------------------------
 acc = 100*sum(yHat == y) / numel(y);
 C = confusionmat(double(y), yHat)
 figure; imagesc(C);
@@ -28,6 +35,39 @@ xlabel('predicted class');
 ylabel('true class');
 title(sprintf('CIFAR-10 confusion matrix; acc=%0.2f', acc));
 
+
+
+%-------------------------------------------------------------------------------
+% Visualize uncertainty
+%-------------------------------------------------------------------------------
+figure;
+subplot(3,1,1);
+%boxplot(variationRatio, y==2, 'labels', {'y != auto', 'y == auto'});
+boxplot(variationRatio, y, 'labels', classes);
+%
+subplot(3,1,2);
+hist(variationRatio);
+title('variation ratio - CIFAR-10 all test data');
+xlim([0 1]);
+%
+subplot(3,1,3);
+hist(variationRatio(y==2));
+xlim([0 1]);
+title('variation ratio - CIFAR-10, y=auto test data');
+
+
+idx = (variationRatio >= .1);
+accHighVR = 100 * sum(yHat(idx) == y(idx)) / sum(idx);
+fprintf('[%s]: accuracy on objects with high variation ratio: %0.2f%%\n', ...
+        mfilename, accHighVR); 
+
+figure;
+boxplot(variationRatio, y==yHat, 'labels', {'incorrect', 'correct'});
+title('Variation Ratio');
+
+
+plot_cifar_example(X, y, ArgMax, 1);
+return;
 
 
 %-------------------------------------------------------------------------------
@@ -122,13 +162,14 @@ for ii = 1:length(muRank)
     muRank(ii) = sum(variance(nbrs) > variance(ii)) / sum(nbrs);
 end
 
-%idx1 = (muRank < .1);
-idx1 = (muRank < .1) & (y ~= 2);
+idx1 = (muRank < .1);
+%idx1 = (muRank < .1) & (y ~= 2);
 fprintf('[%s] Accuracy for low-rank test examples: %0.2f%%\n', ...
         mfilename, 100*sum(y(idx1) == yHat(idx1)) / sum(idx1));
 
 %idx2 = (muMax < quantile(muMax, .1));
-idx2 = (muMax < quantile(muMax, .1)) & (y ~= 2);
+%idx2 = (muMax < quantile(muMax, .1)) & (y ~= 2);
+idx2 = (muRank >= quantile(muRank, .9));
 fprintf('[%s] Accuracy for low-mean test examples: %0.2f%%\n', ...
         mfilename, 100*sum(y(idx2) == yHat(idx2)) / sum(idx2));
 
