@@ -1,4 +1,4 @@
-function plot_cifar_example(X, y, Prob, idx0)
+function plot_cifar_example(X, y, ArgMax, idx0)
     
 if nargin < 4, idx0 = 1; end
     
@@ -8,8 +8,8 @@ classes = {'plane', 'auto', 'bird', 'cat', 'deer', ...
 
 tau = 1; % TODO: set this properly
 
-fig = figure('Position', [200, 200, 800, 800]);
-ha = tight_subplot(2,2, [.03, .03]);
+fig = figure('Position', [200, 200, 400, 800]);
+ha = tight_subplot(2,1, [.03, .03]);
 
 sId = uicontrol('Style', 'slider', ...
                 'Min', 1, 'Max', length(y), ...
@@ -28,7 +28,34 @@ function slider_cb(source, callbackdata)
 end  % slider_cb()
 
 
+
 function redraw(idx)
+    est = ArgMax(idx,:);
+    vr = sum(est == mode(est)) / numel(est);
+    
+    dist = zeros(1, 10);
+    for ii = 1:numel(dist)
+        dist(ii) = sum(est == ii);
+    end
+    
+    figure(fig);
+    cla(ha(1));  cla(ha(2));
+    
+    axes(ha(1));
+    imagesc(X(:,:,:,idx));
+    set(gca, 'XTick', [], 'YTick', []);
+    title(sprintf('Example %d; y=%s, yHat=%s', ...
+                  idx, classes{y(idx)+1}, classes{mode(est)}));
+    
+    axes(ha(2));
+    stem(dist); xlim([.5, 10.5]);
+    grid on;
+    set(gca, 'XTick', 1:10, 'XTickLabel', classes);
+    title(sprintf('Distribution of predictions (vr=%0.2f)', vr));
+end
+
+
+function redraw_old(idx)
     Xi = squeeze(Prob(idx,:,:));   %  (#classes x #samples)
     Xi = Xi';                     %  -> rows-as-examples
     Cov = cov(Xi);
