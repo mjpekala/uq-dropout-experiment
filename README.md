@@ -1,8 +1,8 @@
 # uq-dropout-experiment
 
-This repository hosts an experiment for working with the uncertainty quantification approach of Gal & Ghahramani in their paper "Dropout as Bayesian Approximation: Representing Model Uncertainty in Deep Learning".
+This repository hosts an experiment for working with the uncertainty quantification approach of Gal & Ghahramani in their paper ["Dropout as Bayesian Approximation: Representing Model Uncertainty in Deep Learning"](http://arxiv.org/abs/1506.02142).
 
-This code is in an experimental state and subject to change.
+*This code is in an experimental state and subject to change.*
 
 
 ## Quick start
