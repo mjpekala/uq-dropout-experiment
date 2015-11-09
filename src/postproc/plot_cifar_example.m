@@ -8,8 +8,8 @@ classes = {'plane', 'auto', 'bird', 'cat', 'deer', ...
 
 tau = 1; % TODO: set this properly
 
-fig = figure('Position', [200, 200, 400, 1200]);
-ha = tight_subplot(3,1, [.03, .03]);
+fig = figure('Position', [200, 200, 800, 800]);
+ha = tight_subplot(2,2, [.03, .03]);
 
 sId = uicontrol('Style', 'slider', ...
                 'Min', 1, 'Max', length(y), ...
@@ -33,6 +33,8 @@ function redraw(idx)
     Xi = Xi';                     %  -> rows-as-examples
     Cov = cov(Xi);
     Cov = eye(size(Cov)) / tau + Cov;
+    
+    [~,muOrdered] = sort(mean(Xi,1), 'descend');
 
     figure(fig);
     cla(ha(1));  cla(ha(2)); cla(ha(3));
@@ -52,6 +54,11 @@ function redraw(idx)
     imagesc(Cov); colorbar;
     set(gca, 'YTick', 1:10, 'YTickLabel', classes);
     set(gca, 'XTick', 1:10, 'XTickLabel', classes);
+    
+    axes(ha(4));
+    hist(Xi(:,muOrdered(1)));
+    legend(sprintf('scores for y=%d', muOrdered(1)), 'Location', 'NorthWest');
+    
 end % redraw()
 
 
