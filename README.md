@@ -45,3 +45,5 @@ Once these models have trained, you can evaluate (i.e. carry out stochastic forw
 
 Deploying is usually much faster than training, hence the lack of nohup here.
 You'll can modify these examples to use different Caffe configuration files or enable/disable other options.
+
+Note also this code currently only supports a small set of Caffe solvers/parameters.  The code could (should?) be changed to support the PyCaffe solver API (assuming it is compatible with the memory data layer); alternatively, there's a slightly improved implementation of the Python-based solver availble [here](https://github.com/mjpekala/faster-membranes).
