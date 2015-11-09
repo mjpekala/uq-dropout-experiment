@@ -21,3 +21,27 @@ Note that the following modifications to Caffe are required:
 ```
 - Apply the patch described here: https://github.com/yaringal/DropoutUncertaintyCaffeModels (permits stochastic forward passes at "deploy" time).  Note that I called the new parameter "do_mc" instead of "sample_weights_test".
 
+
+### Training and Generating Estimates
+The [Makefile](./Makefile) provides some examples of how to run the software wrapper.  You'll need to get the CIFAR-10 data set first:
+```
+    cd ./data
+    ./getcifar.sh
+	gunzip cifar-10-binary.tar.gz
+```
+
+Once you have the data, you can use the provided [Makefile](./Makefile) to train models.  For example, to train models with different classes held out you can do
+```
+    nohup make GPU=1 HOLD_OUT=1 train &> nohup.train.1 &
+    nohup make GPU=2 HOLD_OUT=2 train &> nohup.train.2 &
+    ...
+	```
+
+Once these models have trained, you can evaluate (i.e. carry out stochastic forward passes) via
+```
+    make GPU=1 HOLD_OUT=1 deploy
+    ...
+```
+
+Deploying is usually much faster than training, hence the lack of nohup here.
+You'll can modify these examples to use different Caffe configuration files or enable/disable other options.
