@@ -23,11 +23,11 @@ Note that the following modifications to Caffe are required:
 
 
 ### Training and Generating Estimates
-The [Makefile](./Makefile) provides some examples of how to run the software wrapper.  You'll need to get the CIFAR-10 data set first:
+You'll first need to get the CIFAR-10 data set, e.g.:
 ```
     cd ./data
     ./getcifar.sh
-	gunzip cifar-10-binary.tar.gz
+    gunzip cifar-10-binary.tar.gz
 ```
 
 Once you have the data, you can use the provided [Makefile](./Makefile) to train models.  For example, to train models with different classes held out you can do
