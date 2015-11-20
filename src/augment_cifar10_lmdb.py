@@ -66,7 +66,7 @@ def main(inDir, outDir, nAugment=3):
     print('[%s]: creating synthetic data...' % NAME)
     idx = 0
     datum = caffe.proto.caffe_pb2.Datum()
-    env = lmdb.open(outDir, map_size=X[0].size*len(X)*(nAugment+1))
+    env = lmdb.open(outDir, map_size=10*X[0].size*len(X)*(nAugment+1))
     with env.begin(write=True) as txn:
         for ii in range(len(y)):
             Xi = X[ii];  yi = y[ii]
@@ -83,6 +83,7 @@ def main(inDir, outDir, nAugment=3):
             for jj in range(nAugment):
                 Xj = augment(Xi, hflip=np.mod(jj,2)==0) 
                 datum.data = Xj.tostring()
+                strId = '{:08}'.format(idx)
                 txn.put(strId.encode('ascii'), datum.SerializeToString()) 
                 idx += 1
 
