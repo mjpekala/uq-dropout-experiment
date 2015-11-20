@@ -35,7 +35,7 @@ Once you have the data, you can use the provided [Makefile](./Makefile) to train
     nohup make GPU=1 HOLD_OUT=1 train &> nohup.train.1 &
     nohup make GPU=2 HOLD_OUT=2 train &> nohup.train.2 &
     ...
-	```
+```
 
 Once these models have trained, you can evaluate (i.e. carry out stochastic forward passes) via
 ```
@@ -45,3 +45,5 @@ Once these models have trained, you can evaluate (i.e. carry out stochastic forw
 
 Deploying is usually much faster than training, hence the lack of nohup here.
 You'll can modify these examples to use different Caffe configuration files or enable/disable other options.
+
+Note also this code currently only supports a small set of Caffe solvers/parameters.  The code could (should?) be changed to support the PyCaffe solver API (assuming it is compatible with the memory data layer); alternatively, there's a slightly improved implementation of the Python-based solver availble [here](https://github.com/mjpekala/faster-membranes).
