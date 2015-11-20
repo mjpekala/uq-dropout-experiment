@@ -31,12 +31,15 @@ def augment(X, maxJitter=2, hflip=True):
         Xout = np.zeros(X.shape, dtype=X.dtype)
         Xout[...] = X[...]
 
-    dx = np.round(maxJitter - np.random.rand() * 2 * maxJitter)
-    dy = np.round(maxJitter - np.random.rand() * 2 * maxJitter)
+    dx = int(np.round(maxJitter - np.random.rand() * 2 * maxJitter))
+    dy = int(np.round(maxJitter - np.random.rand() * 2 * maxJitter))
 
-    pdb.set_trace() # TEMP
-    Xout = np.roll(Xout, dx, axis=1)
-    Xout = np.roll(Xout, dy, axis=2)
+    xv = np.arange(X.shape[1]);  xv = np.roll(xv,dx)
+    yv = np.arange(X.shape[2]);  yv = np.roll(yv,dy)
+
+    Xout[...] = Xout[:,xv,:]
+    Xout[...] = Xout[:,:,yv]
+
     return Xout
 
 
@@ -83,7 +86,12 @@ def main(inDir, outDir, nAugment=3):
                 txn.put(strId.encode('ascii'), datum.SerializeToString()) 
                 idx += 1
 
+
+            if np.mod(ii, 500) == 0:
+                print('[%s]: Processed %d of %d images...' % (NAME, ii, len(y)))
+
     return 
+
 
 
 if __name__ == "__main__":
